@@ -8,6 +8,7 @@ public class BiozinRouletteApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(BiozinRouletteApplication.class, args);
+        System.out.println("Si levanto :)");
     }
 
 }
