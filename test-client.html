@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test WebSocket - Ruleta</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        h1 { color: #00ffff; }
+        button {
+            background: #333;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-family: monospace;
+        }
+        button:hover { background: #00ff00; color: #000; }
+        input {
+            background: #333;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px;
+            margin: 5px;
+            font-family: monospace;
+        }
+        .log {
+            background: #000;
+            border: 1px solid #00ff00;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .status { padding: 10px; margin: 10px 0; }
+        .connected { background: #004400; }
+        .disconnected { background: #440000; }
+        .section {
+            border: 1px solid #444;
+            padding: 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+<h1>🎲 Test WebSocket - Ruleta Trampa</h1>
+
+<div id="status" class="status disconnected">❌ Desconectado</div>
+
+<div class="section">
+    <h3>1. Conexión</h3>
+    <input type="text" id="salaId" value="sala-test" placeholder="ID de sala">
+    <button onclick="connect()">Conectar</button>
+    <button onclick="disconnect()">Desconectar</button>
+</div>
+
+<div class="section">
+    <h3>2. Agregar Nombres</h3>
+    <input type="text" id="nombres" value="Ana,Bob,Carlos,Diana" style="width: 300px;">
+    <button onclick="agregarNombres()">Enviar Nombres</button>
+</div>
+
+<div class="section">
+    <h3>3. Control (Forzar ganador)</h3>
+    <input type="number" id="targetIndex" placeholder="Índice (0,1,2...)" style="width: 150px;">
+    <button onclick="setTarget()">Forzar</button>
+    <button onclick="setTargetNull()">Modo Aleatorio</button>
+</div>
+
+<div class="section">
+    <h3>4. Girar</h3>
+    <button onclick="girarRuleta()" style="font-size: 18px;">🎲 GIRAR RULETA</button>
+</div>
+
+<div class="section">
+    <h3>5. Log de Mensajes</h3>
+    <button onclick="clearLog()">Limpiar</button>
+    <div id="log" class="log"></div>
+</div>
+
+<script>
+    let stompClient = null;
+    let currentSalaId = null;
+
+    function connect() {
+        const salaId = document.getElementById('salaId').value.trim();
+        if (!salaId) {
+            alert('Ingresa un ID de sala');
+            return;
+        }
+
+        currentSalaId = salaId;
+        const socket = new SockJS('http://localhost:8080/ws');
+        stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function(frame) {
+            updateStatus(true);
+            addLog('✅ Conectado al servidor');
+
+            // Suscribirse al topic público
+            stompClient.subscribe('/topic/sala/' + salaId + '/publico', function(message) {
+                const data = JSON.parse(message.body);
+                addLog('📨 PÚBLICO: ' + JSON.stringify(data, null, 2));
+            });
+
+            // Suscribirse al topic de control
+            stompClient.subscribe('/topic/sala/' + salaId + '/control', function(message) {
+                const data = JSON.parse(message.body);
+                addLog('🔐 CONTROL: ' + JSON.stringify(data, null, 2));
+            });
+
+            addLog('📡 Suscrito a sala: ' + salaId);
+        });
+    }
+
+    function disconnect() {
+        if (stompClient !== null) {
+            stompClient.disconnect();
+            updateStatus(false);
+            addLog('👋 Desconectado');
+        }
+    }
+
+    function agregarNombres() {
+        if (!checkConnection()) return;
+
+        const nombresInput = document.getElementById('nombres').value;
+        const nombres = nombresInput.split(',').map(n => n.trim()).filter(n => n);
+
+        const payload = {
+            salaId: currentSalaId,
+            nombres: nombres
+        };
+
+        stompClient.send("/app/sala/agregar-nombres", {}, JSON.stringify(payload));
+        addLog('📤 Enviado: agregar-nombres');
+    }
+
+    function setTarget() {
+        if (!checkConnection()) return;
+
+        const targetIndex = parseInt(document.getElementById('targetIndex').value);
+        if (isNaN(targetIndex) || targetIndex < 0) {
+            alert('Ingresa un índice válido >= 0');
+            return;
+        }
+
+        const payload = {
+            salaId: currentSalaId,
+            targetIndex: targetIndex
+        };
+
+        stompClient.send("/app/sala/set-target", {}, JSON.stringify(payload));
+        addLog('📤 Enviado: set-target → ' + targetIndex);
+    }
+
+    function setTargetNull() {
+        if (!checkConnection()) return;
+
+        const payload = {
+            salaId: currentSalaId,
+            targetIndex: null
+        };
+
+        stompClient.send("/app/sala/set-target", {}, JSON.stringify(payload));
+        addLog('📤 Enviado: modo aleatorio');
+    }
+
+    function girarRuleta() {
+        if (!checkConnection()) return;
+
+        const payload = {
+            salaId: currentSalaId
+        };
+
+        stompClient.send("/app/sala/girar", {}, JSON.stringify(payload));
+        addLog('📤 Enviado: GIRAR');
+    }
+
+    function checkConnection() {
+        if (stompClient === null || !stompClient.connected) {
+            alert('Primero conéctate');
+            return false;
+        }
+        return true;
+    }
+
+    function updateStatus(connected) {
+        const statusDiv = document.getElementById('status');
+        if (connected) {
+            statusDiv.className = 'status connected';
+            statusDiv.textContent = '✅ Conectado - Sala: ' + currentSalaId;
+        } else {
+            statusDiv.className = 'status disconnected';
+            statusDiv.textContent = '❌ Desconectado';
+        }
+    }
+
+    function addLog(message) {
+        const logDiv = document.getElementById('log');
+        const entry = document.createElement('div');
+        entry.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+        logDiv.appendChild(entry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function clearLog() {
+        document.getElementById('log').innerHTML = '';
+    }
+</script>
+</body>
+</html>
